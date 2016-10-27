@@ -728,14 +728,16 @@ export default class Navbar extends React.Component {
                 />
             );
 
-            channelMembersModal = (
-                <ChannelMembersModal
-                    show={this.state.showMembersModal}
-                    onModalDismissed={() => this.setState({showMembersModal: false})}
-                    channel={channel}
-                    isAdmin={isAdmin}
-                />
-            );
+            if (this.state.showMembersModal) {
+                channelMembersModal = (
+                    <ChannelMembersModal
+                        show={true}
+                        onModalDismissed={() => this.setState({showMembersModal: false})}
+                        channel={channel}
+                        isAdmin={isAdmin}
+                    />
+                );
+            }
 
             channelSwitchModal = (
                 <ChannelSwitchModal
