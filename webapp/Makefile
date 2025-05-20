@@ -1,54 +1,102 @@
-.PHONY: build test run clean stop check-style run-unit
+-include config.override.mk
+include config.mk
 
-BUILD_SERVER_DIR = ..
+# The CI environment variable is set automatically in CircleCI and GitLab CI
+CI ?= false
 
-check-style: .npminstall
-	@echo Checking for style guide compliance
+# Detect Linux/ARM64 and set a flag to fix the issue with optipng-bin on it:
+# please see optipng-bin Linux arm64 support issue (https://github.com/imagemin/optipng-bin/issues/118) for details:
+ifeq ($(shell uname)/$(shell uname -m),Linux/aarch64)
+  LINUX_ARM64 = true
+  CPPFLAGS += -DPNG_ARM_NEON_OPT=0
+endif
+# Exact same issue but for Linux/PPC64
+ifeq ($(findstring Linux/ppc64,$(shell uname)/$(shell uname -m)),Linux/ppc64)
+  LINUX_PPC64 = true
+  CPPFLAGS += -DPNG_POWERPC_VSX_OPT=0
+endif
 
-	npm run check
+.PHONY: run
+run: node_modules ## Runs app
+	@echo Running Mattermost Web App for development
 
-test: .npminstall
-	cd $(BUILD_SERVER_DIR) && $(MAKE) internal-test-web-client
+	npm run run
 
-.npminstall: package.json
-	@echo Getting dependencies using npm
-
-	npm install
-
-	touch $@
-
-build: .npminstall
-	@echo Building mattermost Webapp
-
-	rm -rf dist
-
-	npm run build
-
-run: .npminstall
-	@echo Running mattermost Webapp for development
-
-	npm run run &
-
-run-fullmap: .npminstall
-	@echo FULL SOURCE MAP Running mattermost Webapp for development FULL SOURCE MAP
-
-	npm run run-fullmap &
-
-stop:
+.PHONY: stop
+stop: ## Stops webpack
 	@echo Stopping changes watching
 
 ifeq ($(OS),Windows_NT)
 	wmic process where "Caption='node.exe' and CommandLine like '%webpack%'" call terminate
 else
-	@for PROCID in $$(ps -ef | grep "[n]ode.*[w]ebpack" | awk '{ print $$2 }'); do \
-		echo stopping webpack watch $$PROCID; \
-		kill $$PROCID; \
-	done
+	-@pkill -f webpack || true
 endif
 
-clean:
-	@echo Cleaning Webapp
+.PHONY: restart
+restart: | stop run ## Restarts the app
 
-	rm -rf dist
+.PHONY: dev
+dev: node_modules ## Runs app with webpack-dev-server
+	npm run dev-server
+
+.PHONY: test
+test: node_modules ## Runs tests
+	@echo Running jest unit/component testing
+
+	npm run test
+
+.PHONY: check-style
+check-style: node_modules ## Checks JS file for ESLint confirmity
+	@echo Checking for style guide compliance
+
+	npm run check
+
+.PHONY: fix-style
+fix-style: node_modules ## Fix JS file ESLint issues
+	@echo Fixing lint issues to follow style guide
+
+	npm run fix
+
+.PHONY: check-types
+check-types: node_modules ## Checks TS file for TypeScript confirmity
+	@echo Checking for TypeScript compliance
+
+	npm run check-types
+
+.PHONY: dist
+dist: node_modules ## Builds all web app packages
+	@echo Packaging Mattermost Web App
+
+	npm run build
+
+node_modules: package.json $(wildcard package-lock.json)
+	@echo Getting dependencies using npm
+
+ifeq ($(CI),false)
+	CPPFLAGS="$(CPPFLAGS)" npm install
+else
+	# This runs in CI with NODE_ENV=production which skips devDependencies without this flag
+	npm ci --include=dev
+endif
+
+	touch $@
+
+.PHONY: clean
+clean: ## Clears cached; deletes node_modules and dist directories
+	@echo Cleaning Web App
+
+	npm run clean --workspaces --if-present
 	rm -rf node_modules
-	rm -f .npminstall
+
+.PHONY: package
+package: node_modules dist ## Generates ./mattermost-webapp.tar.gz for use by someone customizing the web app
+	mkdir tmp
+	mv channels/dist tmp/client
+	tar -C tmp -czf mattermost-webapp.tar.gz client
+	mv tmp/client channels/dist
+	rmdir tmp
+
+## Help documentation à la https://marmelab.com/blog/2016/02/29/auto-documented-makefile.html
+.PHONY: help
+help:
+	@grep -E '^[0-9a-zA-Z_-]+:.*?## .*$$' ./Makefile | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
